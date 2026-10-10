@@ -1,0 +1,28 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Downloaded third-party tool (run `uv run legacy-denoiser setup`)
+tools/
+
+# Sample photos and all image / processing output
+samples/
+*.dcr
+*.DCR
+*.mef
+*.MEF
+*.dng
+*.DNG
+*.xmp
+*.jpg
+*.tif
+*.tiff
+_dxo_work/
+pureraw_batch.txt
