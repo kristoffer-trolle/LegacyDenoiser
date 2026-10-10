@@ -49,20 +49,53 @@ class UnsupportedCamera(ValueError):
 class RawImage:
     path: Path
     camera: Camera
-    cfa: np.ndarray            # (H, W) uint16 linear sensor values, as stored (not rotated)
+    cfa: np.ndarray            # (H, W) uint16 linear sensor values (as stored, or upright if baked)
     pattern: tuple[int, ...]   # DNG CFA pattern for the top-left 2x2, e.g. (1, 0, 2, 1) = GRBG
     black: int
     white: int
     color_matrix: list[float]  # XYZ(D65) -> camera, row major 3x3
     as_shot_neutral: list[float]
     crop: tuple[int, int, int, int]  # x, y, w, h of the valid image area
-    orientation: int           # EXIF orientation of the original file (1 = as stored)
+    orientation: int           # EXIF orientation to write (1 = show cfa as is)
     iso: int
-    preview: np.ndarray = field(repr=False, default=None)  # small sRGB render, not rotated
+    preview: np.ndarray = field(repr=False, default=None)  # small sRGB render, same orientation as cfa
 
 
 def read_metadata(path: Path) -> dict:
-    return json.loads(exiftool("-j", "-n", "-Model", "-Orientation", "-ISO", "-ExposureIndex", str(path)))[0]
+    return json.loads(exiftool("-j", "-n", "-Model", "-ISO", "-ExposureIndex", str(path)))[0]
+
+
+# LibRaw's flip code -> (EXIF orientation, np.rot90 k that turns the stored pixels upright)
+_FLIPS = {0: (1, 0), 3: (3, 2), 5: (8, 1), 6: (6, -1)}
+
+
+def _rotate_rect(rect: tuple[int, int, int, int], shape: tuple[int, int], k: int) -> tuple[int, int, int, int]:
+    """Where rectangle (x, y, w, h) in an image of `shape` ends up after np.rot90(image, k)."""
+    x, y, w, h = rect
+    H, W = shape
+    k %= 4
+    if k == 1:  # counter-clockwise
+        return y, W - x - w, h, w
+    if k == 2:
+        return W - x - w, H - y - h, w, h
+    if k == 3:  # clockwise
+        return H - y - h, x, h, w
+    return rect
+
+
+def _corrected_cfa(r: rawpy.RawPy) -> np.ndarray:
+    """Sensor data with the maker's calibration applied (black level per row/column, flat field, ...).
+
+    LibRaw applies these corrections only while processing, so run its processing with everything else
+    switched off (no white balance, no colour conversion, no scaling, linear) and keep each pixel's own
+    colour channel, which demosaicing leaves untouched.
+    """
+    rgb = r.postprocess(output_color=rawpy.ColorSpace.raw, user_wb=[1, 1, 1, 1], gamma=(1, 1),
+                        no_auto_bright=True, no_auto_scale=True, output_bps=16, user_flip=0,
+                        demosaic_algorithm=rawpy.DemosaicAlgorithm.LINEAR)
+    channel = r.raw_colors_visible.copy()
+    channel[channel == 3] = 1  # second green
+    return np.take_along_axis(rgb, channel[..., None].astype(np.intp), axis=2)[..., 0]
 
 
 def read_raw(path: str | Path) -> RawImage:
@@ -71,14 +104,19 @@ def read_raw(path: str | Path) -> RawImage:
     camera = by_model(str(meta.get("Model", "")))
     if camera is None:
         raise UnsupportedCamera(f"unsupported camera '{meta.get('Model', 'unknown')}'")
-    orientation = meta.get("Orientation")
-    orientation = orientation if isinstance(orientation, int) and 1 <= orientation <= 8 else 1
     iso = meta.get(camera.iso_tag) or meta.get("ISO") or 100
 
     with rawpy.imread(str(path)) as r:
         desc = r.color_desc.decode()
         pattern = tuple(_LIBRAW_TO_DNG[desc[i]] for i in r.raw_pattern.flatten())
-        cfa = r.raw_image_visible.copy()
+        # LibRaw also understands orientation stored outside EXIF (e.g. Phase One's own metadata).
+        # Read it before any processing: processing with user_flip=0 resets it.
+        orientation, k = _FLIPS.get(r.sizes.flip, (1, 0))
+        cfa = r.raw_image_visible
+        if camera.libraw_corrections:
+            cfa = _corrected_cfa(r)
+        # Keep whole 2x2 Bayer blocks: drop a last odd row/column
+        cfa = cfa[:cfa.shape[0] // 2 * 2, :cfa.shape[1] // 2 * 2].copy()
         color_matrix = np.array(r.rgb_xyz_matrix[:3], dtype=np.float64)
         cam_mul = np.array(r.camera_whitebalance[:3], dtype=np.float64)
         has_wb = bool(np.all(cam_mul > 0))
@@ -91,7 +129,17 @@ def read_raw(path: str | Path) -> RawImage:
         crop = (s.crop_left_margin, s.crop_top_margin, s.crop_width, s.crop_height)
         if crop[2] <= 0 or crop[3] <= 0:
             crop = (0, 0, cfa.shape[1], cfa.shape[0])
+        x, y, w, h = crop
+        crop = (x, y, min(w, cfa.shape[1] - x), min(h, cfa.shape[0] - y))
         preview = r.postprocess(use_camera_wb=has_wb, half_size=True, output_bps=8, user_flip=0)
+
+        if camera.bake_orientation and k:
+            tile = np.tile(np.array(pattern).reshape(2, 2), (2, 2))
+            pattern = tuple(int(v) for v in np.rot90(tile, k)[:2, :2].flatten())
+            crop = _rotate_rect(crop, cfa.shape, k)
+            cfa = np.ascontiguousarray(np.rot90(cfa, k))
+            preview = np.ascontiguousarray(np.rot90(preview, k))
+            orientation = 1
         return RawImage(
             path=path,
             camera=camera,

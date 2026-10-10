@@ -18,6 +18,8 @@ samples/
 *.DCR
 *.mef
 *.MEF
+*.iiq
+*.IIQ
 *.dng
 *.DNG
 *.xmp

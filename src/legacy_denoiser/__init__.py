@@ -25,7 +25,7 @@ def main() -> None:
     from . import dng
     from .cameras import CAMERAS
 
-    supported = ", ".join(f"{c.name} ({'/'.join(c.extensions)})" for c in CAMERAS)
+    supported = ", ".join(f"{c.name.format(model='P-series')} ({'/'.join(c.extensions)})" for c in CAMERAS)
     ap = argparse.ArgumentParser(prog="legacy-denoiser", description=f"Supported cameras: {supported}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 

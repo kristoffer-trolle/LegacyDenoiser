@@ -31,6 +31,7 @@ The denoised DNG:
 |---|---|
 | Kodak DCS Pro Back 645 | `.DCR` |
 | Mamiya ZD | `.MEF` |
+| Phase One P-series: P20, P21, P25, P30, P45 (also the + versions) | `.IIQ` |
 
 ### What you need
 
@@ -161,7 +162,11 @@ gets the real ISO back.
 - **The result is a "linear" DNG.** DxO has already demosaiced the image, just like DxO's own and Lightroom's
   Denoise output. Everything stays editable, but it isn't the untouched sensor data any more.
 - **The files are uncompressed** and therefore large.
-- **Very clean photos gain little.** A Mamiya ZD photo at ISO 50 is already almost noise-free.
+- **Very clean photos gain little.** A Mamiya ZD or Phase One photo at ISO 50 is already almost noise-free.
+- **Phase One P40+, P65+ and the IQ series are not supported.** Their sensors are larger than the Pentax 645D
+  the tool disguises photos as. Their files use the same `.IIQ` extension and are skipped with a message.
+- **Only the Phase One P25+ has been tested** with a real file. The other P-series backs use the same file
+  format and are handled the same way, but haven't been tried.
 
 ## 4. For developers
 
@@ -183,7 +188,7 @@ Everything except the camera's identity is generic. A camera can be added if:
 
 1. LibRaw can read its raw files.
 2. It uses a normal 2×2 Bayer colour filter (not Fujifilm X-Trans, Sigma Foveon or similar).
-3. Its sensor data fits inside the 645D frame (7264×5440 pixels, in the orientation it is stored in).
+3. Its sensor data fits inside the 645D frame (7264×5440 pixels, in the orientation the DNG stores it).
 
 Then add an entry to `CAMERAS` in `src/legacy_denoiser/cameras.py` and the file extension to `.gitignore`:
 
@@ -198,6 +203,22 @@ Camera(
     iso_tag="ISO",                    # tag holding the ISO (the Kodak uses ExposureIndex)
 ),
 ```
+
+**Orientation.** Some raw formats store the pixels on their side. Check how Camera Raw treats them: look at
+`tiff:Orientation` in a `.xmp` sidecar Camera Raw made for a photo that displays correctly.
+
+- If it is `6` or `8` (like the Mamiya ZD), Camera Raw keeps the pixels as stored and rotates on display.
+  Nothing to do; the DNG does the same.
+- If it is `1` although the photo needs turning (like Phase One backs), Camera Raw rotates the pixels itself
+  and your edits refer to the turned image. Add `bake_orientation=True`; the DNG then stores turned pixels.
+
+**Maker calibration.** Some formats (Phase One) store raw data that still needs the maker's calibration,
+such as a black level per row and column. LibRaw only applies it while processing. If a plain DNG
+(`todng`) shows a strong colour cast that white balance can't fix, add `libraw_corrections=True`.
+
+**Camera families.** `exif_model` is a regular expression, and `{model}` in `name`, `model` and
+`unique_model` is replaced by the file's own model, so one entry can cover a whole family (see the Phase One
+entry).
 
 Adobe's camera name matters: Camera Raw only applies Adobe Standard and camera-specific `.dcp` profiles when
 the DNG's `UniqueCameraModel` matches it exactly. It can be found in the camera's `.dcp` profile files or in

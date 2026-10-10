@@ -1,6 +1,6 @@
 @echo off
 setlocal
-rem Legacy Denoiser: drag raw files (Kodak DCR, Mamiya MEF) or folders onto this file
+rem Legacy Denoiser: drag raw files (Kodak DCR, Mamiya MEF, Phase One IIQ) or folders onto this file
 rem to denoise them with DxO PureRAW 3.
 rem Strength: DxO sees each photo's own ISO times FACTOR (higher = stronger denoising).
 set FACTOR=4
